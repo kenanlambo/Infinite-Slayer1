@@ -1,0 +1,52 @@
+name: Build APK
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unpack the project zip
+        run: |
+          if [ -f settings.gradle.kts ]; then echo "PROJECT_DIR=." >> $GITHUB_ENV; exit 0; fi
+          best=""; bestv=0
+          for z in *.zip; do
+            [ -f "$z" ] || continue
+            d="unz_$RANDOM"; mkdir "$d"; unzip -q "$z" -d "$d"
+            f=$(find "$d" -name settings.gradle.kts | head -1); [ -n "$f" ] || continue
+            p=$(dirname "$f"); v=$(grep -o 'versionCode = [0-9]*' "$p/app/build.gradle.kts" | grep -o '[0-9]*' || echo 0)
+            echo "$z -> version $v"
+            if [ "$v" -gt "$bestv" ]; then bestv=$v; best="$p"; fi
+          done
+          if [ -z "$best" ]; then echo "No project zip found"; ls -la; exit 1; fi
+          echo "Using $best (version $bestv)"
+          echo "PROJECT_DIR=$best" >> $GITHUB_ENV
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android 16 SDK
+        continue-on-error: true
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-36" "build-tools;36.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+
+      - name: Build release APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: gradle :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Rename
+        run: cp "$PROJECT_DIR/app/build/outputs/apk/release/app-release.apk" Emberwake.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Emberwake-apk
+          path: Emberwake.apk
